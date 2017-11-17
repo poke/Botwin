@@ -37,7 +37,7 @@ namespace Botwin
             ApplyGlobalAfterHook(builder, options);
 
             var routeBuilder = new RouteBuilder(builder);
-            var systemRoutes = new List<(string verb, string route)>();
+            var systemRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             //Create a "startup scope" to resolve modules from
             using (var scope = builder.ApplicationServices.CreateScope())
@@ -53,41 +53,14 @@ namespace Botwin
                     {
                         routeBuilder.MapVerb(route.verb, route.path, CreateRouteHandler(route, moduleType));
 
-                        var strippedPath = route.path.EndsWith("/") ? route.path.Substring(0, route.path.Length - 1) : route.path;
-                        systemRoutes.Add((route.verb, "/" + strippedPath));
+                        systemRoutes.Add(route.path.TrimEnd('/'));
                     }
                 }
 
                 builder.UseRouter(routeBuilder.Build());
+                builder.UseMiddleware<MethodNotAllowedMiddleware>(systemRoutes);
 
-                return builder.Use((ctx, next) => GetMethodNotAllowedHandler(ctx, next, systemRoutes));
-            }
-        }
-
-        /// <summary>
-        /// This method is only called if it's a valid 404 or 405
-        /// </summary>
-        /// <param name="context"></param>
-        /// <param name="next"></param>
-        /// <param name="systemRoutes"></param>
-        /// <returns></returns>
-        private static async Task GetMethodNotAllowedHandler(HttpContext context, Func<Task> next, IEnumerable<(string verb, string route)> systemRoutes)
-        {
-            //Call the final pipeline which gets ASP.Net Core status code, usually a 404 in this case
-            await next();
-
-            var strippedPath = context.Request.Path.Value.EndsWith("/") && context.Request.Path.Value.Length > 1
-                ? context.Request.Path.Value.Substring(0, context.Request.Path.Value.Length - 1)
-                : context.Request.Path.Value;
-
-            //ASP.Net Core will set a 405 response to 404. Let's check if it's a valid 404 first otherwise if we know about the route it's most likely a 405
-            if (context.Response.StatusCode == 404 && systemRoutes.Any(x => x.route == strippedPath))
-            {
-                var verbsForPath = systemRoutes.Where(x => x.route == strippedPath).Select(y => y.verb);
-                if (verbsForPath.All(x => x != context.Request.Method))
-                {
-                    context.Response.StatusCode = 405;
-                }
+                return builder;
             }
         }
 
